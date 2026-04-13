@@ -105,3 +105,7 @@ pyinstaller --onefile mqtt_cli.py
 ```
 
 打包后的 `mqtt_cli.exe` 在 `dist/` 目录下，将 exe 和 `config.yaml` 放在同一目录即可使用。
+
+
+---
+*Last updated: 2026-04-13*
