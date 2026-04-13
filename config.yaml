@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════
+# MQTT 充电桩模拟 CLI 配置文件
+# ═══════════════════════════════════════════════════
+
+# ─── 环境配置（支持多环境，可自行新增） ───
+environments:
+  pre:
+    mqtt_ip: "47.96.240.241"          # MQTT 服务器地址
+    mqtt_port: 12883                   # MQTT 端口
+    mqtt_user: "charge-mqtt"           # MQTT 用户名
+    mqtt_pwd: "vTZLRlmlDJiR"          # MQTT 密码（建议通过环境变量 MQTT_PWD_PRE 设置）
+    public_pile: "XPeng_10002_Charge"  # 产品 Key (productKey)
+    url_equip: "https://thor.deploy-test.xiaopeng.com/api/xp-thor-asset/asset/equip/search"  # 设备查询接口
+    url_order: "https://xmart.deploy-test.xiaopeng.com/biz/v5/chargeOrder/chargeOrderV2"     # 创建订单接口
+    pile: "XPAC2017YS03240002"        # 默认桩编号
+    vin: "TEST2K0Y5JI4P6BC7"          # 默认 VIN 码
+    uid: "8102985"                     # 默认用户 UID
+
+  test:
+    mqtt_ip: "47.96.240.241"           # MQTT 服务器地址（test 环境）
+    mqtt_port: 12883                    # MQTT 端口
+    mqtt_user: "charge-private-mqtt"    # MQTT 用户名
+    mqtt_pwd: "0LZVRlmlD88Y"           # MQTT 密码（建议通过环境变量 MQTT_PWD_TEST 设置）
+    public_pile: "XPeng_TEST_Charge"    # 产品 Key
+    url_equip: "http://thor.test.xiaopeng.local/api/xp-thor-asset/asset/equip/search"
+    url_order: "https://10.0.13.28:8553/biz/v5/chargeOrder/chargeOrderV2"
+    pile: "559847003"                   # 默认桩编号（test 环境）
+    vin: "TESTNUYCXPKWVTIZF"           # 默认 VIN 码（test 环境）
+    uid: "1160057"                      # 默认用户 UID（test 环境）
+
+# ─── 通用默认参数 ───
+defaults:
+  env: "pre"                # 默认环境
+  cif: 1                    # 充电接口编号 (1=A枪, 2=B枪)
+  speed: 2.0                # 模拟速度倍数 (越大越快)
+  soc: 90                   # BMS SOC (0-100)
+  bsoc: 20                  # 开始 SOC (0-100)
+  esoc: 90                  # 结束 SOC (0-100, 需大于 bsoc)
+  bat: 3                    # 电池类型 (3=磷酸铁锂, 6=三元锂)
+  rated_ah: 231.9           # 蓄电池额定容量 (AH)
+  rated_kwh: 74             # 蓄电池标定总能量 (KWh)
+
+# ─── 电池/BMS 参数（starting 报文用） ───
+battery:
+  maxAllowTemp: 105         # BMS 最高允许温度 (°C)
+  maxAllowVol: 427.6        # BMS 最高允许充电总电压 (V)
+  cellMaxAllowVol: 4.38     # 单体最高允许电压 (V)
+  maxAllowCur: 376.1        # BMS 最大允许充电电流 (A)
+  ratedVol: 345.6           # 额定电压 (V)
+  batVol: 336.0             # 电池电压 (V)
+  maxOutVol: 500.0          # 桩最大输出电压 (V)
+  minOutVol: 200.0          # 桩最小输出电压 (V)
+  maxOutCur: 200.0          # 桩最大输出电流 (A)
+  minOutCur: 0.0            # 桩最小输出电流 (A)
+  bhmMaxAllowVol: 427.6     # BHM 最高允许充电总电压 (V)

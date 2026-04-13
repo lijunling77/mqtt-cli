@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电池充检 MQTT 模拟器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"Microsoft YaHei",sans-serif;background:#0f1923;color:#c9d1d9;min-height:100vh}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;color:#58a6ff;display:flex;align-items:center;gap:8px}
+.status-bar{display:flex;align-items:center;gap:12px;font-size:13px}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot.on{background:#3fb950;box-shadow:0 0 6px #3fb950}.dot.off{background:#f85149}.dot.running{background:#d29922;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.main{display:grid;grid-template-columns:400px 1fr;height:calc(100vh - 53px)}
+.left{background:#161b22;border-right:1px solid #30363d;overflow-y:auto;display:flex;flex-direction:column}
+.section{padding:16px;border-bottom:1px solid #30363d}
+.section h3{font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.input-group{display:flex;gap:8px;margin-bottom:10px}
+.input-group label{font-size:12px;color:#8b949e;min-width:80px;line-height:32px}
+.input-group input,.input-group select{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:6px 10px;font-size:13px;height:32px}
+.input-group input:focus{border-color:#58a6ff;outline:none}
+.uid-input{font-size:16px!important;height:40px!important;font-weight:600;letter-spacing:.5px}
+.btn{padding:8px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;transition:all .15s}
+.btn-primary{background:#238636;color:#fff}.btn-primary:hover{background:#2ea043}
+.btn-sm{padding:4px 10px;font-size:11px}
+.btn-outline{background:transparent;color:#8b949e;border:1px solid #30363d}.btn-outline:hover{border-color:#58a6ff;color:#58a6ff}
+.scenario-card{width:100%;text-align:left;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;margin-bottom:8px;cursor:pointer;transition:all .15s}
+.scenario-card:hover{border-color:#58a6ff;background:#161b22;transform:translateX(2px)}
+.scenario-card:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.scenario-card .top{display:flex;align-items:center;gap:8px}
+.scenario-card .icon{font-size:18px}
+.scenario-card .name{font-size:14px;font-weight:600;color:#e6edf3}
+.scenario-card .desc{font-size:11px;color:#8b949e;margin-top:4px;line-height:1.4}
+.scenario-card.active{border-color:#3fb950;background:#0d2818}
+.scenario-params{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;margin-top:8px}
+.speed-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.speed-row label{font-size:12px;color:#8b949e}
+.speed-row input[type=range]{flex:1;accent-color:#58a6ff}
+.speed-val{font-size:13px;color:#58a6ff;font-weight:600;min-width:32px}
+.run-btn{width:100%;padding:14px;font-size:15px;font-weight:600;border-radius:8px;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:8px}
+.run-btn:disabled{opacity:.5;cursor:not-allowed}
+.step-indicator{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 12px;margin-top:10px;font-size:13px;color:#d29922;display:none;align-items:center;gap:8px}
+.step-indicator.show{display:flex}
+.spinner{width:14px;height:14px;border:2px solid #30363d;border-top-color:#d29922;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.right{display:flex;flex-direction:column;overflow:hidden}
+.log-bar{background:#161b22;border-bottom:1px solid #30363d;padding:8px 16px;display:flex;align-items:center;justify-content:space-between}
+.log-bar span{font-size:13px;color:#8b949e}
+.log-content{flex:1;overflow-y:auto;padding:8px;font-family:"Cascadia Code","Fira Code","Consolas",monospace;font-size:12px;line-height:1.7}
+.log-entry{padding:3px 8px;border-radius:3px;margin-bottom:1px;display:flex;gap:8px;align-items:baseline}
+.log-entry:hover{background:#1c2128}
+.lt{color:#484f58;min-width:85px}.ld{min-width:28px;font-weight:700}
+.ld.s{color:#3fb950}.ld.r{color:#d29922}.ld.y{color:#58a6ff}.ld.e{color:#f85149}
+.ltp{color:#bc8cff;min-width:160px}.lp{color:#8b949e;word-break:break-all}
+.ls{color:#484f58;font-size:11px;min-width:100px}
+.config-toggle{font-size:12px;color:#58a6ff;cursor:pointer;background:none;border:none;padding:4px 0}
+.config-toggle:hover{text-decoration:underline}
+.config-panel{display:none;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;margin-top:8px}
+.config-panel.show{display:block}
+.btn-row{display:flex;gap:6px;margin-top:8px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚡ 电池充检 MQTT 模拟器</h1>
+  <div class="status-bar">
+    <div class="dot" id="dot"></div>
+    <span id="statusText">未连接</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="left">
+    <!-- UID 输入 -->
+    <div class="section">
+      <h3>设备信息</h3>
+      <div class="input-group">
+        <label>设备 UID</label>
+        <input id="uid" class="uid-input" placeholder="输入桩的 deviceName">
+      </div>
+      <button class="config-toggle" onclick="toggleConfig()">▸ MQTT Broker 配置</button>
+      <div class="config-panel" id="configPanel">
+        <div class="input-group"><label>Broker</label><input id="broker" value="127.0.0.1"></div>
+        <div class="input-group"><label>端口</label><input id="port" value="1883" type="number"></div>
+        <div class="input-group"><label>用户名</label><input id="username" value=""></div>
+        <div class="input-group"><label>密码</label><input id="password" value="" type="password"></div>
+        <div class="input-group"><label>ProductKey</label><input id="productKey" value="your_product_key"></div>
+        <div class="btn-row">
+          <button class="btn btn-primary btn-sm" onclick="saveConfig()">保存并连接</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 场景选择 -->
+    <div class="section" style="flex:1;overflow-y:auto">
+      <h3>选择测试场景</h3>
+      <div class="speed-row">
+        <label>执行速度</label>
+        <input type="range" id="speed" min="0.5" max="5" step="0.5" value="2" oninput="document.getElementById('speedVal').textContent=this.value+'x'">
+        <span class="speed-val" id="speedVal">2x</span>
+      </div>
+      <div id="scenarioList"></div>
+
+      <!-- 动态参数区 -->
+      <div id="extraParams"></div>
+
+      <!-- 执行按钮 -->
+      <button class="btn btn-primary run-btn" id="runBtn" onclick="doRun()">
+        <span>▶ 开始执行</span>
+      </button>
+
+      <!-- 步骤指示 -->
+      <div class="step-indicator" id="stepIndicator">
+        <div class="spinner"></div>
+        <span id="stepText"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="right">
+    <div class="log-bar">
+      <span>📋 报文日志</span>
+      <div>
+        <label style="font-size:12px;color:#8b949e;margin-right:10px"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
+        <button class="btn btn-outline btn-sm" onclick="clearLogs()">清空</button>
+      </div>
+    </div>
+    <div class="log-content" id="logContent"></div>
+  </div>
+</div>
+
+<script>
+const SCENARIOS = JSON.parse('{{ scenarios | tojson | safe }}');
+let selectedScenario = null;
+let polling = null;
+let lastLogTime = "";
+
+// 渲染场景列表
+function renderScenarios() {
+  const el = document.getElementById("scenarioList");
+  el.innerHTML = "";
+  for (const [key, s] of Object.entries(SCENARIOS)) {
+    const card = document.createElement("button");
+    card.className = "scenario-card" + (selectedScenario === key ? " active" : "");
+    card.innerHTML = `<div class="top"><span class="icon">${s.icon}</span><span class="name">${s.name}</span></div><div class="desc">${s.desc}</div>`;
+    card.onclick = () => selectScenario(key);
+    el.appendChild(card);
+  }
+}
+
+function selectScenario(key) {
+  selectedScenario = key;
+  renderScenarios();
+  renderParams(key);
+}
+
+function renderParams(key) {
+  const s = SCENARIOS[key];
+  const el = document.getElementById("extraParams");
+  if (!s.params || s.params.length === 0) { el.innerHTML = ""; return; }
+  let html = '<div class="scenario-params">';
+  for (const p of s.params) {
+    html += `<div class="input-group"><label>${p.label}</label>`;
+    if (p.type === "select") {
+      html += `<select id="param_${p.key}">`;
+      for (const o of p.options) html += `<option value="${o.value}" ${o.value==p.default?'selected':''}>${o.label}</option>`;
+      html += '</select>';
+    } else {
+      html += `<input id="param_${p.key}" type="${p.type}" value="${p.default}" ${p.min!=null?'min="'+p.min+'"':''} ${p.max!=null?'max="'+p.max+'"':''}>`;
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html + '</div>';
+}
+
+async function doRun() {
+  const uid = document.getElementById("uid").value.trim();
+  if (!uid) { alert("请输入设备 UID"); return; }
+  if (!selectedScenario) { alert("请选择一个测试场景"); return; }
+
+  const params = {speed: document.getElementById("speed").value};
+  const s = SCENARIOS[selectedScenario];
+  if (s.params) {
+    for (const p of s.params) {
+      const el = document.getElementById("param_" + p.key);
+      if (el) params[p.key] = el.value;
+    }
+  }
+
+  const res = await fetch("/api/run", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({uid, scenario: selectedScenario, params})
+  });
+  const data = await res.json();
+  if (!data.ok) alert(data.msg);
+}
+
+function toggleConfig() {
+  const p = document.getElementById("configPanel");
+  const t = document.querySelector(".config-toggle");
+  p.classList.toggle("show");
+  t.textContent = p.classList.contains("show") ? "▾ MQTT Broker 配置" : "▸ MQTT Broker 配置";
+}
+
+async function saveConfig() {
+  const body = {
+    broker: document.getElementById("broker").value,
+    port: document.getElementById("port").value,
+    username: document.getElementById("username").value,
+    password: document.getElementById("password").value,
+    product_key: document.getElementById("productKey").value,
+  };
+  const res = await fetch("/api/connect", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const data = await res.json();
+  alert(data.ok ? "连接成功" : "连接失败: " + data.msg);
+  updateStatus();
+}
+
+async function updateStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+    const dot = document.getElementById("dot");
+    const text = document.getElementById("statusText");
+    const step = document.getElementById("stepIndicator");
+    const stepText = document.getElementById("stepText");
+    const runBtn = document.getElementById("runBtn");
+
+    dot.className = "dot " + (data.connected ? (data.running ? "running" : "on") : "off");
+    text.textContent = data.connected ? (data.running ? "执行中" : "已连接") : "未连接";
+
+    if (data.running && data.step) {
+      step.classList.add("show");
+      stepText.textContent = data.step;
+      runBtn.disabled = true;
+    } else {
+      step.classList.remove("show");
+      runBtn.disabled = false;
+    }
+    document.querySelectorAll(".scenario-card").forEach(c => c.disabled = data.running);
+  } catch(e) {}
+}
+
+async function fetchLogs() {
+  try {
+    const res = await fetch("/api/logs?since=" + encodeURIComponent(lastLogTime));
+    const logs = await res.json();
+    if (!logs.length) return;
+    const c = document.getElementById("logContent");
+    const dirMap = {"发送":"s","接收":"r","系统":"y","ERROR":"e"};
+    logs.reverse().forEach(l => {
+      const d = document.createElement("div");
+      d.className = "log-entry";
+      let ph = l.payload;
+      try { ph = hl(JSON.stringify(JSON.parse(l.payload),null,0)); } catch(e) { ph = esc(l.payload); }
+      d.innerHTML = `<span class="lt">${l.time}</span><span class="ld ${dirMap[l.direction]||'y'}">${l.direction==='发送'?'↑':l.direction==='接收'?'↓':'●'}</span><span class="ls">${esc(l.step||'')}</span><span class="ltp">${esc(l.type)}</span><span class="lp">${ph}</span>`;
+      c.appendChild(d);
+    });
+    lastLogTime = logs[logs.length-1].time;
+    if (document.getElementById("autoScroll").checked) c.scrollTop = c.scrollHeight;
+    updateStatus();
+  } catch(e) {}
+}
+
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function hl(s){return esc(s).replace(/"(\w+)":/g,'<span style="color:#79c0ff">"$1"</span>:').replace(/:\s*"([^"]*)"/g,': <span style="color:#a5d6ff">"$1"</span>').replace(/:\s*(-?\d+\.?\d*)/g,': <span style="color:#d2a8ff">$1</span>')}
+function clearLogs(){fetch("/api/logs/clear",{method:"POST"});document.getElementById("logContent").innerHTML="";lastLogTime=""}
+
+renderScenarios();
+polling = setInterval(fetchLogs, 400);
+setInterval(updateStatus, 1000);
+</script>
+</body>
+</html>
