@@ -163,6 +163,21 @@ defaults:
 
 ## 给不用 Kiro 的人
 
+### 方案一：用其他 AI 工具（Cursor / Claude Desktop / VS Code Copilot）
+
+本项目的 MCP Server 支持所有兼容 MCP 协议的 AI 工具。详见 `mcp-config/README.md`。
+
+简单来说：
+1. 克隆项目，安装依赖
+2. 在对应工具中配置 MCP（指向 `mqtt_mcp_server.py`）
+3. 在 AI 聊天中用自然语言操作
+
+### 方案二：飞书机器人
+
+在飞书群里 @机器人 即可操作，不需要任何开发工具。详见 `feishu_bot.py` 顶部说明。
+
+### 方案三：exe 交互式菜单
+
 发这三个文件：
 1. `dist/mqtt_cli.exe` — 主程序
 2. `config.yaml` — 配置文件
