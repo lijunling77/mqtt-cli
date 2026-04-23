@@ -96,10 +96,6 @@ python run_plan.py test_plans/fault_tests.yaml --env test  # 指定环境
 
 本项目提供 MCP Server（`mqtt_mcp_server.py`），支持在 AI 工具中用自然语言操作充电桩模拟。各工具配置方式见 `mcp-config/README.md`。
 
-### 飞书机器人
-
-在飞书群里 @机器人 即可操作，不需要任何开发工具。配置方式见 `feishu_bot.py` 顶部说明。
-
 ## 配置文件说明
 
 `config.yaml` 包含三个部分：
