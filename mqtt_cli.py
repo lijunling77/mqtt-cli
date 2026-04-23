@@ -107,11 +107,14 @@ class DualLogger:
         """写入日志文件（去除 ANSI 颜色码，密码脱敏）"""
         import re
         clean = re.sub(r'\033\[[0-9;]*m', '', text)
-        # 密码脱敏
         for key in ["mqtt_pwd", "password", "pwd"]:
             if key in clean:
                 clean = re.sub(rf'"{key}":\s*"[^"]*"', f'"{key}": "***"', clean)
         self.f.write(clean + '\n')
+        self.f.flush()
+
+    def flush(self):
+        """刷新日志文件缓冲区"""
         self.f.flush()
 
     def close(self):
@@ -213,6 +216,125 @@ class Charger:
         self.client = self.sub.mqtt_connect()
         self.topic = f"/{cfg['public_pile']}/{pile}/update"
 
+    # ─── 公共构建块 ───
+
+    def _default_bat_params(self, bat=3, rated_ah=231.9, rated_kwh=74):
+        """返回 starting 报文的电池参数 dict"""
+        return dict(
+            batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
+            maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=rated_ah,
+            ratedKWh=rated_kwh, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
+            maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
+            batVendor='', batNo=-1, batDate='', batChaTimes=-1,
+            batProperty=-1, bmsSoftVer=''
+        )
+
+    def _start_idle(self, cif, count=2):
+        """上报空闲状态"""
+        step("上报空闲")
+        for _ in range(count):
+            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
+            self.w(1)
+
+    def _create_order(self, uid):
+        """获取二维码 & 创建订单，返回 (qrCode, orderID)"""
+        step("获取二维码 & 创建订单")
+        resp = requests_http(
+            req_Url=self.cfg["url_equip"],
+            headers={"Content-Type": "application/json; charset=UTF-8",
+                     "logan": "true", "xp-thor-skip-auth": "true",
+                     "xp-thor-user-id": uid},
+            requestsType="POST",
+            requestsBody=json.dumps({"pileNo": self.pile}))
+        qr = ""
+        try:
+            qr = resp["data"]["records"][0]["gunList"][0]["gunQrCode"]
+            ok(f"gunQrCode: {qr}")
+        except Exception as e:
+            logging.error(f"获取 gunQrCode 失败: {e}")
+
+        resp2 = requests_http(
+            req_Url=self.cfg["url_order"],
+            headers={"Content-Type": "application/json; charset=UTF-8",
+                     "xp-client-type": "1", "xp-uid": uid},
+            requestsType="POST",
+            requestsBody=json.dumps({"qrCode": qr, "settleType": "01", "test": True}))
+        oid = ""
+        try:
+            oid = resp2["data"]["orderNo"] or ""
+            ok(f"orderID: {oid}")
+        except Exception as e:
+            logging.error(f"创建订单失败: {e}")
+        return qr, oid
+
+    def _start_states(self, cif, t, oid, vin, charge_type=0, bat_params=None):
+        """发送启动状态序列 state 0→5（即插即充）或 1→5（扫码）"""
+        step("启动状态序列")
+        bp = bat_params or self._default_bat_params()
+        if charge_type == 0:
+            # 即插即充: state 0→5
+            for s in range(6):
+                self.pub(self.m.publish_dc_starting(
+                    cif=cif, tradeID=t, orderID=oid, vin=vin, type=charge_type,
+                    state=s, reason=0, **bp
+                ), f"starting-s{s}")
+                self.w(1)
+        else:
+            # 扫码: state 1→4（简略），然后 state 5（带电池参数）
+            for s in [1, 2, 3, 4]:
+                self.pub(self.m.publish_dc_starting(
+                    cif=cif, tradeID=t, orderID=oid, vin=vin, type=charge_type, state=s,
+                    bmsPVer='V0.0', batVendor='', batNo=-1, batDate='',
+                    batChaTimes=-1, batProperty=-1, bmsSoftVer=''
+                ), f"starting-s{s}")
+                self.w(2)
+            self.pub(self.m.publish_dc_starting(
+                cif=cif, tradeID=t, orderID=oid, vin=vin, type=charge_type,
+                state=5, reason=0, **bp
+            ), "starting-s5")
+            self.w(1)
+
+    def _report_charging(self, cif, t, soc, es, energy):
+        """上报充电中数据: BMS + YX + YcMeas"""
+        step("上报 BMS/YX/YcMeas")
+        self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=392.3, r_cur=-511.3,
+                 mode=2, soc=soc, remainTime=16, cellMaxVol=4.09,
+                 minTemp=33, maxTemp=35, m_vol=220.0, m_cur=-500.0), "ycBMS")
+        self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
+                 yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
+        self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
+                 energy=energy, energy1=es[0], energy2=es[1],
+                 energy3=es[2], energy4=es[3]), "ycMeas")
+        self.w(2)
+
+    def _end_and_trade(self, cif, t, oid, vin, bsoc, esoc, reason=114):
+        """结束充电 + 交易上传 + 恢复空闲"""
+        es, energy = rand_e()
+        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
+        t5 = ts(random.randint(1300, 2300))
+
+        step("结束充电")
+        self.pub(self.m.publish_chargend(
+            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
+            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
+            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
+            csr=reason, errCode=""
+        ), "chargEnd")
+        for _ in range(2):
+            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
+        self.w(1)
+
+        step("交易上传")
+        self.pub(self.m.publish_trade(
+            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
+            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
+            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=reason
+        ), "trade")
+        self.w(1)
+
+        step("恢复空闲")
+        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
+
     def _send_bms_series(self, cif, tradeID, bsoc, esoc, count=4, interval=20, bms_params=None):
         """充电中阶段发送多条 SOC 递增的 ycBMS 报文"""
         for i in range(count):
@@ -251,164 +373,47 @@ class Charger:
 
     def plug_charge(self, vin, cif, soc, bsoc, esoc, bat):
         """即插即充完整流程"""
+        validate_vin(vin)
+        validate_soc(soc, bsoc, esoc)
+        validate_bat(bat)
+
         t = make_tid()
         es, energy = rand_e()
-        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
-        t5 = ts(random.randint(1300, 2300))
 
-        step("1/7 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step("2/7 车辆验证")
+        step("车辆验证")
         self.pub(self.m.publish_carchk(cif=cif, vin=vin, vsrc='0'), "carChk")
         self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), yx1=1, rssi=31), "yx-工作")
         self.w(1)
 
-        step("3/7 启动状态 state 0→5")
-        for s in range(6):
-            self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=s, reason=0,
-                batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-                maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=231.9,
-                ratedKWh=74, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-                maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-                batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-                batProperty=-1, bmsSoftVer=''
-            ), f"starting-s{s}")
-            self.w(1)
+        self._start_states(cif, t, '', vin, charge_type=0, bat_params=self._default_bat_params(bat))
+        self._report_charging(cif, t, soc, es, energy)
+        self._end_and_trade(cif, t, '', vin, bsoc, esoc)
 
-        step("4/7 上报 BMS/YX/YcMeas")
-        self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=392.3, r_cur=-511.3,
-                 mode=2, soc=soc, remainTime=16, cellMaxVol=4.09,
-                 minTemp=33, maxTemp=35, m_vol=220.0, m_cur=-500.0), "ycBMS")
-        self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
-                 yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
-        self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
-                 energy=energy, energy1=es[0], energy2=es[1],
-                 energy3=es[2], energy4=es[3]), "ycMeas")
-        self.w(2)
-
-        step("5/7 结束充电")
-        self.pub(self.m.publish_chargend(
-            cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
-            csr=114, errCode=""
-        ), "chargEnd")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
-        self.w(1)
-
-        step("6/7 交易上传")
-        self.pub(self.m.publish_trade(
-            cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=114
-        ), "trade")
-        self.w(1)
-
-        step("7/7 恢复空闲")
-        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
         ok("即插即充完成 ✓")
         return (t, "")
 
     def scan_charge(self, vin, cif, uid, soc, bsoc, esoc, bat):
         """扫码充电完整流程"""
+        validate_vin(vin)
+        validate_soc(soc, bsoc, esoc)
+        validate_bat(bat)
+
         t = make_tid()
         es, energy = rand_e()
-        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
-        t5 = ts(random.randint(1300, 2300))
 
-        step("1/8 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step("2/8 扫码等待插枪")
+        step("扫码等待插枪")
         self.pub(self.m.publish_yx(cif=cif, status=5, time=ts(), yx1=1), "yx-等待插枪")
         self.w(1)
 
-        step("3/8 获取二维码 & 创建订单")
-        resp = requests_http(
-            req_Url=self.cfg["url_equip"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "logan": "true", "xp-thor-skip-auth": "true",
-                     "xp-thor-user-id": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"pileNo": self.pile}))
-        qr = ""
-        try:
-            qr = resp["data"]["records"][0]["gunList"][0]["gunQrCode"]
-            ok(f"gunQrCode: {qr}")
-        except Exception as e:
-            logging.error(f"获取 gunQrCode 失败: {e}")
+        _, oid = self._create_order(uid)
+        self._start_states(cif, t, oid, vin, charge_type=1, bat_params=self._default_bat_params(bat))
+        self._report_charging(cif, t, soc, es, energy)
+        self._end_and_trade(cif, t, oid, vin, bsoc, esoc)
 
-        resp2 = requests_http(
-            req_Url=self.cfg["url_order"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "xp-client-type": "1", "xp-uid": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"qrCode": qr, "settleType": "01", "test": True}))
-        oid = ""
-        try:
-            oid = resp2["data"]["orderNo"] or ""
-            ok(f"orderID: {oid}")
-        except Exception as e:
-            logging.error(f"创建订单失败: {e}")
-
-        step("4/8 启动状态 state 1→5")
-        for s in [1, 2, 3, 4]:
-            self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=s,
-                bmsPVer='V0.0', batVendor='', batNo=-1, batDate='',
-                batChaTimes=-1, batProperty=-1, bmsSoftVer=''
-            ), f"starting-s{s}")
-            self.w(2)
-        self.pub(self.m.publish_dc_starting(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=5, reason=0,
-            batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-            maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=231.9,
-            ratedKWh=74.0, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-            maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-            batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-            batProperty=-1, bmsSoftVer=''
-        ), "starting-s5")
-        self.w(1)
-
-        step("5/8 上报 BMS/YX/YcMeas")
-        self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=392.3, r_cur=-511.3,
-                 mode=2, soc=soc, remainTime=16, cellMaxVol=4.09,
-                 minTemp=33, maxTemp=35, m_vol=220.0, m_cur=-500.0), "ycBMS")
-        self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
-                 yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
-        self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
-                 energy=energy, energy1=es[0], energy2=es[1],
-                 energy3=es[2], energy4=es[3]), "ycMeas")
-        self.w(2)
-
-        step("6/8 结束充电")
-        self.pub(self.m.publish_chargend(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
-            csr=114, errCode=""
-        ), "chargEnd")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
-        self.w(1)
-
-        step("7/8 交易上传")
-        self.pub(self.m.publish_trade(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=114
-        ), "trade")
-        self.w(1)
-
-        step("8/8 恢复空闲")
-        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
         ok("扫码充电完成 ✓")
         return (t, oid)
 
@@ -416,66 +421,17 @@ class Charger:
         """充电小结场景：扫码充电流程 + 多条不同功率 ycBMS"""
         t = make_tid()
         es, energy = rand_e()
-        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
-        t5 = ts(random.randint(1300, 2300))
 
-        step("1/9 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step("2/9 扫码等待插枪")
+        step("扫码等待插枪")
         self.pub(self.m.publish_yx(cif=cif, status=5, time=ts(), yx1=1), "yx-等待插枪")
         self.w(1)
 
-        step("3/9 获取二维码 & 创建订单")
-        resp = requests_http(
-            req_Url=self.cfg["url_equip"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "logan": "true", "xp-thor-skip-auth": "true",
-                     "xp-thor-user-id": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"pileNo": self.pile}))
-        qr = ""
-        try:
-            qr = resp["data"]["records"][0]["gunList"][0]["gunQrCode"]
-            ok(f"gunQrCode: {qr}")
-        except Exception as e:
-            logging.error(f"获取 gunQrCode 失败: {e}")
+        _, oid = self._create_order(uid)
+        self._start_states(cif, t, oid, vin, charge_type=1, bat_params=self._default_bat_params(bat))
 
-        resp2 = requests_http(
-            req_Url=self.cfg["url_order"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "xp-client-type": "1", "xp-uid": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"qrCode": qr, "settleType": "01", "test": True}))
-        oid = ""
-        try:
-            oid = resp2["data"]["orderNo"] or ""
-            ok(f"orderID: {oid}")
-        except Exception as e:
-            logging.error(f"创建订单失败: {e}")
-
-        step("4/9 启动状态 state 1→5")
-        for s in [1, 2, 3, 4]:
-            self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=s,
-                bmsPVer='V0.0', batVendor='', batNo=-1, batDate='',
-                batChaTimes=-1, batProperty=-1, bmsSoftVer=''
-            ), f"starting-s{s}")
-            self.w(2)
-        self.pub(self.m.publish_dc_starting(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=5, reason=0,
-            batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-            maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=231.9,
-            ratedKWh=74.0, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-            maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-            batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-            batProperty=-1, bmsSoftVer=''
-        ), "starting-s5")
-        self.w(1)
-
-        step("5/9 上报多条 BMS 数据（充电小结）")
+        step("上报多条 BMS 数据（充电小结）")
         for i, bms in enumerate(SUMMARY_BMS_SEQUENCE):
             self.pub(self.m.publish_ycBMS(
                 cif=cif, tradeID=t, r_vol=bms["r_vol"], r_cur=bms["r_cur"],
@@ -484,7 +440,7 @@ class Charger:
             ), f"ycBMS-{i+1}")
             self.w(20)
 
-        step("6/9 上报 YX/YcMeas")
+        step("上报 YX/YcMeas")
         self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
                  yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
         self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
@@ -492,27 +448,8 @@ class Charger:
                  energy3=es[2], energy4=es[3]), "ycMeas")
         self.w(2)
 
-        step("7/9 结束充电")
-        self.pub(self.m.publish_chargend(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
-            csr=reason, errCode=""
-        ), "chargEnd")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
-        self.w(1)
+        self._end_and_trade(cif, t, oid, vin, bsoc, esoc, reason)
 
-        step("8/9 交易上传")
-        self.pub(self.m.publish_trade(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=reason
-        ), "trade")
-        self.w(1)
-
-        step("9/9 恢复空闲")
-        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
         ok("充电小结完成 ✓")
         return (t, oid)
 
@@ -522,67 +459,20 @@ class Charger:
         soc = 24  # SOC 必须小于 25
         bat = 3
 
-        step("1/6 上报桩属性(cdEn=1)")
+        step("上报桩属性(cdEn=1)")
         self.pub(self.m.publish_pileProp(cdEn=1), "pileProp")
         self.w(1)
 
-        step("2/6 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step("3/6 扫码等待插枪")
+        step("扫码等待插枪")
         self.pub(self.m.publish_yx(cif=cif, status=5, time=ts(), yx1=1), "yx-等待插枪")
         self.w(1)
 
-        step("4/6 获取二维码 & 创建订单")
-        resp = requests_http(
-            req_Url=self.cfg["url_equip"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "logan": "true", "xp-thor-skip-auth": "true",
-                     "xp-thor-user-id": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"pileNo": self.pile}))
-        qr = ""
-        try:
-            qr = resp["data"]["records"][0]["gunList"][0]["gunQrCode"]
-            ok(f"gunQrCode: {qr}")
-        except Exception as e:
-            logging.error(f"获取 gunQrCode 失败: {e}")
+        _, oid = self._create_order(uid)
+        self._start_states(cif, t, oid, vin, charge_type=1, bat_params=self._default_bat_params(bat))
 
-        resp2 = requests_http(
-            req_Url=self.cfg["url_order"],
-            headers={"Content-Type": "application/json; charset=UTF-8",
-                     "xp-client-type": "1", "xp-uid": uid},
-            requestsType="POST",
-            requestsBody=json.dumps({"qrCode": qr, "settleType": "01", "test": True}))
-        oid = ""
-        try:
-            oid = resp2["data"]["orderNo"] or ""
-            ok(f"orderID: {oid}")
-        except Exception as e:
-            logging.error(f"创建订单失败: {e}")
-
-        step("5/6 启动状态 state 1→5")
-        for s in [1, 2, 3, 4]:
-            self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=s,
-                bmsPVer='V0.0', batVendor='', batNo=-1, batDate='',
-                batChaTimes=-1, batProperty=-1, bmsSoftVer=''
-            ), f"starting-s{s}")
-            self.w(2)
-        self.pub(self.m.publish_dc_starting(
-            cif=cif, tradeID=t, orderID=oid, vin=vin, type=1, state=5, reason=0,
-            batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-            maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=231.9,
-            ratedKWh=74.0, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-            maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-            batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-            batProperty=-1, bmsSoftVer=''
-        ), "starting-s5")
-        self.w(1)
-
-        step(f"6/6 上报 BMS (SOC={soc}, cdFlag=2) → 充电进行中")
+        step(f"上报 BMS (SOC={soc}, cdFlag=2) → 充电进行中")
         self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=400.3, r_cur=-999,
                  mode=2, soc=soc, soc1=90, remainTime=16, cellMaxVol=4.09,
                  minTemp=33, maxTemp=35, m_vol=1499, m_cur=-999, cdFlag=2), "ycBMS-cdFlag")
@@ -620,32 +510,8 @@ class Charger:
         ok(f"电池充检完成 ✓(结果: {result['errmsg']})")
 
     def finish_charge(self, trade_id, order_id, vin, cif=1, bsoc=10, esoc=30, reason=114):
-        """结束充电流程：chargEnd → trade → 恢复空闲"""
-        es, energy = rand_e()
-        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
-        t5 = ts(random.randint(1300, 2300))
-
-        step("1/3 结束充电")
-        self.pub(self.m.publish_chargend(
-            cif=cif, tradeID=trade_id, orderID=order_id, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
-            csr=reason, errCode=""
-        ), "chargEnd")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
-        self.w(1)
-
-        step("2/3 交易上传")
-        self.pub(self.m.publish_trade(
-            cif=cif, tradeID=trade_id, orderID=order_id, vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=reason
-        ), "trade")
-        self.w(1)
-
-        step("3/3 恢复空闲")
-        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
+        """结束充电流程（复用公共结束序列）"""
+        self._end_and_trade(cif, trade_id, order_id, vin, bsoc, esoc, reason)
         ok("充电订单已结束 ✓")
 
     def scenario_satisfaction_start(self, vin, cif, soc, bsoc, esoc, bat, mode="normal", bms_count=4,
@@ -660,30 +526,15 @@ class Charger:
         }
 
         t = make_tid()
-        es, energy = rand_e()
 
-        step("1/? 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step("2/? 车辆验证")
+        step("车辆验证")
         self.pub(self.m.publish_carchk(cif=cif, vin=vin, vsrc='0'), "carChk")
         self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), yx1=1, rssi=31), "yx-工作")
         self.w(1)
 
-        step("3/? 启动状态 state 0→5")
-        for s in range(6):
-            self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=s, reason=0,
-                batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-                maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=231.9,
-                ratedKWh=74, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-                maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-                batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-                batProperty=-1, bmsSoftVer=''
-            ), f"starting-s{s}")
-            self.w(1)
+        self._start_states(cif, t, '', vin, charge_type=0, bat_params=self._default_bat_params(bat))
 
         # 发送第一组满足度 BMS
         self._send_satisfaction_bms(cif, t, soc, mode, bms_params, bms_count)
@@ -731,74 +582,29 @@ class Charger:
 
         t = make_tid()
         es, energy = rand_e()
-        t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
-        t5 = ts(random.randint(1300, 2300))
 
-        step("1/7 上报空闲")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts()), "yx-空闲")
-            self.w(1)
+        self._start_idle(cif)
 
-        step(f"2/7 车辆验证 (vsrc={vsrc}, vin={vin})")
+        step(f"车辆验证 (vsrc={vsrc}, vin={vin})")
         self.pub(self.m.publish_carchk(cif=cif, vin=vin, vsrc=str(vsrc)), "carChk")
         self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), yx1=1, rssi=31), "yx-工作")
         self.w(1)
 
-        step(f"3/7 启动状态(bat={bat}, ratedAH={rated_ah}, ratedKWh={rated_kwh})")
+        step(f"启动状态(bat={bat}, ratedAH={rated_ah}, ratedKWh={rated_kwh})")
+        bp = self._default_bat_params(bat, rated_ah, rated_kwh)
         for s in range(5):
             self.pub(self.m.publish_dc_starting(
-                cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=s, reason=0,
-                batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-                maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=rated_ah,
-                ratedKWh=rated_kwh, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-                maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-                batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-                batProperty=-1, bmsSoftVer=''
+                cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=s, reason=0, **bp
             ), f"starting-s{s}")
             self.w(1)
         self.pub(self.m.publish_dc_starting(
-            cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=5, reason=0,
-            batType=bat, maxAllowTemp=105, maxAllowVol=427.6, cellMaxAllowVol=4.38,
-            maxAllowCur=376.1, ratedVol=345.6, batVol=336.0, ratedAH=rated_ah,
-            ratedKWh=rated_kwh, batSOC=11.6, maxOutVol=500.0, minOutVol=200.0,
-            maxOutCur=200.0, minOutCur=0.0, bhmMaxAllowVol=427.6, bmsPVer='V1.1',
-            batVendor='', batNo=-1, batDate='', batChaTimes=-1,
-            batProperty=-1, bmsSoftVer=''
+            cif=cif, tradeID=t, orderID='', vin=vin, type=0, state=5, reason=0, **bp
         ), "starting-s5(身份比对)")
         self.w(1)
 
-        step("4/7 上报 BMS/YX/YcMeas")
-        self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=392.3, r_cur=-511.3,
-                 mode=2, soc=soc, remainTime=16, cellMaxVol=4.09,
-                 minTemp=33, maxTemp=35, m_vol=220.0, m_cur=-500.0), "ycBMS")
-        self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
-                 yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
-        self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
-                 energy=energy, energy1=es[0], energy2=es[1],
-                 energy3=es[2], energy4=es[3]), "ycMeas")
-        self.w(2)
+        self._report_charging(cif, t, soc, es, energy)
+        self._end_and_trade(cif, t, '', vin, bsoc, esoc)
 
-        step("5/7 结束充电")
-        self.pub(self.m.publish_chargend(
-            cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
-            csr=114, errCode=""
-        ), "chargEnd")
-        for _ in range(2):
-            self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
-        self.w(1)
-
-        step("6/7 交易上传")
-        self.pub(self.m.publish_trade(
-            cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
-            energy=energy, energy1=es[0], energy2=es[1], energy3=es[2], energy4=es[3],
-            time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=114
-        ), "trade")
-        self.w(1)
-
-        step("7/7 恢复空闲")
-        self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
         ok(f"身份盗用场景完成 ✓(模式: {mode})")
         return (t, "")
 
