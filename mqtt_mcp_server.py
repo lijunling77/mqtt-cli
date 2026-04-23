@@ -169,10 +169,33 @@ TOOLS = [
             "required": ["pile", "msg_json"]
         }
     },
+    {
+        "name": "run_step",
+        "description": "分步执行即插即充流程。step: 1=空闲 2=车辆验证 3=启动状态 4=BMS上报(可自定义参数) 5=结束充电 6=交易上传 7=恢复空闲。每次执行一步，返回结果后等用户确认再执行下一步。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "env": {"type": "string", "default": "pre"},
+                "pile": {"type": "string", "description": "桩编号"},
+                "vin": {"type": "string", "description": "车辆VIN码"},
+                "step": {"type": "integer", "description": "步骤号 (1-7)"},
+                "soc": {"type": "integer", "description": "自定义SOC值", "default": 90},
+                "r_vol": {"type": "number", "description": "自定义需求电压"},
+                "r_cur": {"type": "number", "description": "自定义需求电流"},
+                "m_vol": {"type": "number", "description": "自定义输出电压"},
+                "m_cur": {"type": "number", "description": "自定义输出电流"},
+            },
+            "required": ["pile", "vin", "step"]
+        }
+    },
 ]
 
 
 # ─── Tool 执行 ───
+
+# 分步执行会话缓存（保持 Charger 实例跨步骤复用）
+_step_sessions = {}
+
 
 def execute_tool(name, args):
     env = args.get("env", "pre")
@@ -181,6 +204,49 @@ def execute_tool(name, args):
     vin = args.get("vin", cfg["vin"])
     uid = args.get("uid", cfg["uid"])
     cif = 1
+
+    # 分步执行使用会话缓存
+    if name == "run_step":
+        step_num = args.get("step", 1)
+        session_key = f"{env}_{pile}"
+        if step_num == 1:
+            # 第一步：创建新 Charger 并缓存
+            if session_key in _step_sessions:
+                old_c = _step_sessions[session_key]
+                try:
+                    old_c.client.disconnect()
+                    old_c.client.loop_stop()
+                except:
+                    pass
+            _step_sessions[session_key] = Charger(pile, speed=2.0, env=env)
+
+        c = _step_sessions.get(session_key)
+        if not c:
+            return "❌ 请先执行步骤 1（上报空闲）初始化会话"
+
+        try:
+            custom_soc = args.get("soc") if args.get("soc") != 90 else None
+            (tid, info, has_next), _ = capture_output(
+                c.plug_charge_step, vin, cif, 90, 20, 90, 3, step_num,
+                r_vol=args.get("r_vol"), r_cur=args.get("r_cur"),
+                m_vol=args.get("m_vol"), m_cur=args.get("m_cur"),
+                custom_soc=custom_soc
+            )
+            result = f"{info}\ntradeID: {tid}"
+            if has_next:
+                result += f"\n\n下一步: 步骤 {step_num + 1}/7"
+            else:
+                # 流程结束，清理会话
+                if session_key in _step_sessions:
+                    try:
+                        _step_sessions[session_key].client.disconnect()
+                        _step_sessions[session_key].client.loop_stop()
+                    except:
+                        pass
+                    del _step_sessions[session_key]
+            return result
+        except Exception as e:
+            return f"❌ 步骤 {step_num} 执行失败: {str(e)}"
 
     c = Charger(pile, speed=2.0, env=env)
     try:

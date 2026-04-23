@@ -394,6 +394,90 @@ class Charger:
         ok("即插即充完成 ✓")
         return (t, "")
 
+    def plug_charge_step(self, vin, cif, soc, bsoc, esoc, bat, step_num,
+                         r_vol=None, r_cur=None, m_vol=None, m_cur=None, custom_soc=None):
+        """即插即充分步执行，每次执行一个阶段，返回 (tradeID, step_info, has_next)"""
+        # step_num: 1=空闲, 2=车辆验证, 3=启动状态, 4=BMS上报, 5=结束充电, 6=交易上传, 7=恢复空闲
+        # 使用 _step_ctx 保存跨步骤的上下文
+        if step_num == 1:
+            validate_vin(vin)
+            validate_soc(soc, bsoc, esoc)
+            validate_bat(bat)
+            self._step_ctx = {
+                "t": make_tid(), "es": rand_e(), "vin": vin, "cif": cif,
+                "soc": soc, "bsoc": bsoc, "esoc": esoc, "bat": bat
+            }
+            self._start_idle(cif)
+            return (self._step_ctx["t"], "✅ 步骤 1/7 上报空闲完成", True)
+
+        ctx = self._step_ctx
+        t, (es, energy) = ctx["t"], ctx["es"]
+
+        if step_num == 2:
+            step("车辆验证")
+            self.pub(self.m.publish_carchk(cif=cif, vin=vin, vsrc='0'), "carChk")
+            self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), yx1=1, rssi=31), "yx-工作")
+            self.w(1)
+            return (t, "✅ 步骤 2/7 车辆验证完成 (carChk + yx-工作)", True)
+
+        if step_num == 3:
+            self._start_states(cif, t, '', vin, charge_type=0, bat_params=self._default_bat_params(bat))
+            return (t, "✅ 步骤 3/7 启动状态完成 (state 0→5)", True)
+
+        if step_num == 4:
+            use_soc = custom_soc if custom_soc is not None else soc
+            use_r_vol = r_vol if r_vol is not None else 392.3
+            use_r_cur = r_cur if r_cur is not None else -511.3
+            use_m_vol = m_vol if m_vol is not None else 220.0
+            use_m_cur = m_cur if m_cur is not None else -500.0
+            step(f"上报 BMS (SOC={use_soc}, r_vol={use_r_vol}, r_cur={use_r_cur}, m_vol={use_m_vol}, m_cur={use_m_cur})")
+            self.pub(self.m.publish_ycBMS(cif=cif, tradeID=t, r_vol=use_r_vol, r_cur=use_r_cur,
+                     mode=2, soc=use_soc, remainTime=16, cellMaxVol=4.09,
+                     minTemp=33, maxTemp=35, m_vol=use_m_vol, m_cur=use_m_cur), "ycBMS")
+            self.pub(self.m.publish_yx(cif=cif, status=1, time=ts(), alarm=1,
+                     yx1=1, yx2=1, yx3=1, rssi=31), "yx-充电中")
+            self.pub(self.m.publish_ycMeas(tradeID=t, t2=ts(), time=53,
+                     energy=energy, energy1=es[0], energy2=es[1],
+                     energy3=es[2], energy4=es[3]), "ycMeas")
+            self.w(2)
+            return (t, f"✅ 步骤 4/7 BMS/YX/YcMeas 上报完成 (SOC={use_soc}, 需求电流={use_r_cur}A, 输出电流={use_m_cur}A)", True)
+
+        if step_num == 5:
+            es_val, energy_val = ctx["es"]
+            t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
+            step("结束充电")
+            self.pub(self.m.publish_chargend(
+                cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4,
+                energy=energy_val, energy1=es_val[0], energy2=es_val[1], energy3=es_val[2], energy4=es_val[3],
+                time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc,
+                csr=114, errCode=""
+            ), "chargEnd")
+            for _ in range(2):
+                self.pub(self.m.publish_yx(cif=cif, status=2, time=ts(), alarm=1, yx1=1, rssi=31), "yx-完成")
+            self.w(1)
+            return (t, "✅ 步骤 5/7 结束充电完成 (chargEnd + yx-完成)", True)
+
+        if step_num == 6:
+            es_val, energy_val = ctx["es"]
+            t1, t2, t3, t4 = ts(), ts(10), ts(200), ts(300)
+            t5 = ts(random.randint(1300, 2300))
+            step("交易上传")
+            self.pub(self.m.publish_trade(
+                cif=cif, tradeID=t, orderID='', vin=vin, t1=t1, t2=t2, t3=t3, t4=t4, t5=t5, t6='',
+                energy=energy_val, energy1=es_val[0], energy2=es_val[1], energy3=es_val[2], energy4=es_val[3],
+                time=3, time1=1, time2=0, time3=0, beginSoC=bsoc, endSoC=esoc, csr=114
+            ), "trade")
+            self.w(1)
+            return (t, "✅ 步骤 6/7 交易上传完成", True)
+
+        if step_num == 7:
+            step("恢复空闲")
+            self.pub(self.m.publish_yx(cif=cif, status=0, time=ts(), alarm=1, rssi=31), "yx-空闲")
+            ok("即插即充分步执行完成 ✓")
+            return (t, "✅ 步骤 7/7 恢复空闲完成 — 即插即充全流程结束", False)
+
+        return (0, "❌ 无效步骤号", False)
+
     def scan_charge(self, vin, cif, uid, soc, bsoc, esoc, bat):
         """扫码充电完整流程"""
         validate_vin(vin)
@@ -835,7 +919,7 @@ def interactive_mode(env="pre", pile=None, cif=1, speed=2.0):
             if choice == "1":
                 # 单次跑充电订单
                 print(f"\n  \033[1m单次跑充电订单\033[0m")
-                mode_choice = prompt_choice(["即插即充", "扫码充电"], default=1)
+                mode_choice = prompt_choice(["即插即充", "扫码充电", "即插即充（分步执行）"], default=1)
                 pile_no = prompt("桩编码", pile)
                 vin = prompt("VIN 码", vin)
                 if mode_choice == 2:
@@ -849,11 +933,42 @@ def interactive_mode(env="pre", pile=None, cif=1, speed=2.0):
                     pile = pile_no
                     ok(f"已切换桩: {pile_no}")
 
-                if mode_choice == 2:
+                if mode_choice == 3:
+                    # 分步执行即插即充
+                    step_names = [
+                        "上报空闲", "车辆验证", "启动状态(state 0→5)",
+                        "BMS/YX/YcMeas 上报", "结束充电", "交易上传", "恢复空闲"
+                    ]
+                    for s in range(1, 8):
+                        print(f"\n  \033[1m{'─'*40}\033[0m")
+                        print(f"  \033[1m即将执行步骤 {s}/7: {step_names[s-1]}\033[0m")
+                        if s == 4:
+                            # BMS 上报步骤支持自定义参数
+                            custom = prompt("自定义 BMS 参数? (y/n)", "n")
+                            custom_soc, r_vol, r_cur, m_vol, m_cur = None, None, None, None, None
+                            if custom.lower() == 'y':
+                                custom_soc = int(prompt("SOC", str(soc)))
+                                r_vol = float(prompt("需求电压 r_vol", "392.3"))
+                                r_cur = float(prompt("需求电流 r_cur", "-511.3"))
+                                m_vol = float(prompt("输出电压 m_vol", "220.0"))
+                                m_cur = float(prompt("输出电流 m_cur", "-500.0"))
+                            input(f"  \033[1;93m  按回车执行...\033[0m")
+                            trade_id, info, has_next = c.plug_charge_step(
+                                vin, cif, soc, bsoc, esoc, bat, s,
+                                r_vol=r_vol, r_cur=r_cur, m_vol=m_vol, m_cur=m_cur, custom_soc=custom_soc)
+                        else:
+                            input(f"  \033[1;93m  按回车执行...\033[0m")
+                            trade_id, info, has_next = c.plug_charge_step(vin, cif, soc, bsoc, esoc, bat, s)
+                        print(f"  {info}")
+                        if not has_next:
+                            break
+                    print(f"\n  \033[1;93m\U0001f4cb tradeID: {trade_id}\033[0m")
+                elif mode_choice == 2:
                     trade_id, order_id = c.scan_charge(vin, cif, uid, soc, bsoc, esoc, bat)
+                    print(f"\n  \033[1;93m\U0001f4cb tradeID: {trade_id}  |  orderID: {order_id or '(空)'}\033[0m")
                 else:
                     trade_id, order_id = c.plug_charge(vin, cif, soc, bsoc, esoc, bat)
-                print(f"\n  \033[1;93m\U0001f4cb tradeID: {trade_id}  |  orderID: {order_id or '(空)'}\033[0m")
+                    print(f"\n  \033[1;93m\U0001f4cb tradeID: {trade_id}  |  orderID: {order_id or '(空)'}\033[0m")
 
             elif choice == "2":
                 # 批量跑充电订单
