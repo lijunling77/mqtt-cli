@@ -78,6 +78,28 @@ python mqtt_cli.py --loop 10
 python mqtt_cli.py --env test --scan
 ```
 
+## 批量场景编排
+
+将多个操作编排成 YAML 文件，一次性按顺序执行：
+
+```bash
+python run_plan.py test_plans/daily_smoke.yaml        # 每日冒烟
+python run_plan.py test_plans/full_regression.yaml     # 全量回归
+python run_plan.py test_plans/fault_tests.yaml --env test  # 指定环境
+```
+
+内置 6 个测试计划，覆盖充电流程、场景脚本、异常模拟、跨环境等。详见 `test_plans/README.md`。
+
+## AI 工具集成
+
+### Kiro / Cursor / Claude Desktop / VS Code Copilot
+
+本项目提供 MCP Server（`mqtt_mcp_server.py`），支持在 AI 工具中用自然语言操作充电桩模拟。各工具配置方式见 `mcp-config/README.md`。
+
+### 飞书机器人
+
+在飞书群里 @机器人 即可操作，不需要任何开发工具。配置方式见 `feishu_bot.py` 顶部说明。
+
 ## 配置文件说明
 
 `config.yaml` 包含三个部分：
@@ -113,4 +135,4 @@ pyinstaller --onefile mqtt_cli.py
 
 
 ---
-*Last updated: 2026-04-16*
+*Last updated: 2026-04-23*

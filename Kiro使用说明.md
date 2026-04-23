@@ -31,6 +31,11 @@ pip install -r requirements.txt
 
 如果需要引用 Skill 获取更多命令提示，在聊天中输入 `#mqtt-charger`。
 
+批量编排示例：
+- "跑一遍冒烟测试"
+- "执行全量回归"
+- "跑 fault_tests 测试计划"
+
 ### 方式二：交互式菜单
 
 直接运行，进入交互式菜单：
@@ -95,6 +100,20 @@ python mqtt_cli.py send --json '{"msg":"yx","cif":1,"status":0}'
 # 使用 test 环境
 python mqtt_cli.py --env test run plug
 ```
+
+### 方式四：批量场景编排
+
+将多个操作编排成 YAML 文件，一次性按顺序执行：
+
+```bash
+python run_plan.py test_plans/daily_smoke.yaml        # 每日冒烟
+python run_plan.py test_plans/full_regression.yaml     # 全量回归
+python run_plan.py test_plans/fault_tests.yaml         # 异常模拟
+python run_plan.py test_plans/scenario_tests.yaml      # 场景脚本
+python run_plan.py test_plans/cross_env.yaml           # 跨环境
+```
+
+自定义编排文件格式见 `test_plans/README.md`。
 
 ---
 
