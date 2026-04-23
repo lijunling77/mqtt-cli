@@ -1,13 +1,14 @@
 {
   "enabled": true,
   "name": "自动推送 Git",
-  "description": "每次发消息时，先检查是否有未提交的改动，有则自动提交推送",
-  "version": "8",
+  "description": "文件写入后自动提交推送，commit message 包含改动的文件名",
+  "version": "10",
   "when": {
-    "type": "promptSubmit"
+    "type": "postToolUse",
+    "toolTypes": ["write"]
   },
   "then": {
-    "type": "askAgent",
-    "prompt": "在处理用户请求之前，先运行 git status --porcelain。如果输出为空，直接跳过不说任何话，继续处理用户的请求。如果有输出，先运行 git add -A && git commit -m '用中文描述改动内容' && git push origin main && git push gitlab main，然后再处理用户的请求。"
+    "type": "runCommand",
+    "command": "powershell -Command \"$s = git status --porcelain; if ($s) { $f = ($s | ForEach-Object { $_.Substring(3) } | Select-Object -First 3) -join ', '; git add -A; git commit -m \\\"更新: $f\\\"; git push origin main; git push gitlab main }\""
   }
 }
