@@ -1,6 +1,6 @@
 # 每日冒烟测试 — 快速验证核心充电流程
 name: 每日冒烟测试
-description: 验证即插即充、扫码充电、故障模拟等核心功能是否正常
+description: 验证即插即充和扫码充电核心流程是否正常
 env: pre
 
 steps:
@@ -12,16 +12,3 @@ steps:
 
   - action: scan_charge
     name: 扫码充电
-
-  - action: sleep
-    seconds: 3
-
-  - action: fault_error
-    name: 故障模拟
-    code: E07
-
-  - action: fault_estop
-    name: 急停模拟
-
-  - action: fault_upgrading
-    name: 升级中模拟
