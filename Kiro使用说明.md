@@ -28,6 +28,7 @@ pip install -r requirements.txt
 - "模拟桩故障 E07"
 - "模拟急停"
 - "发送一条 yx 报文，status=6"
+- "分步执行即插即充"（每步确认后再继续，BMS 上报步骤可自定义参数）
 
 如果需要引用 Skill 获取更多命令提示，在聊天中输入 `#mqtt-charger`。
 
@@ -110,7 +111,7 @@ python run_plan.py test_plans/daily_smoke.yaml        # 每日冒烟
 python run_plan.py test_plans/full_regression.yaml     # 全量回归
 python run_plan.py test_plans/fault_tests.yaml         # 异常模拟
 python run_plan.py test_plans/scenario_tests.yaml      # 场景脚本
-python run_plan.py test_plans/cross_env.yaml           # 跨环境
+python run_plan.py test_plans/charging_flow.yaml       # 充电流程
 ```
 
 自定义编排文件格式见 `test_plans/README.md`。
@@ -123,6 +124,7 @@ python run_plan.py test_plans/cross_env.yaml           # 跨环境
 - 输入：桩编码、VIN、UID（扫码时）
 - 其他参数（SOC、电池类型等）使用配置文件默认值
 - 完成后打印 tradeID 和 orderID
+- 支持分步执行模式：每步暂停确认，BMS 上报步骤可自定义 SOC、电压、电流
 
 ### 充电小结
 - 走扫码充电流程 + 多条不同功率 BMS 数据
