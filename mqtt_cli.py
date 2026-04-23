@@ -777,7 +777,7 @@ class Charger:
 
 # ─── 交互式菜单辅助函数 ───
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 
 def make_check_id():
