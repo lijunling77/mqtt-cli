@@ -1,13 +1,14 @@
 {
   "enabled": true,
   "name": "自动推送 Git",
-  "description": "每次代理执行完成后，提醒 AI 提交并推送改动到 Git，commit message 需描述具体修改内容",
-  "version": "1",
+  "description": "当 AI 编辑文件后，自动检查并提交推送改动到 Git（同时推送 origin 和 gitlab）",
+  "version": "2",
   "when": {
-    "type": "agentStop"
+    "type": "postToolUse",
+    "toolTypes": ["write"]
   },
   "then": {
     "type": "askAgent",
-    "prompt": "请检查是否有文件改动（git status），如果有改动，用 git add -A && git commit -m '具体描述本次修改内容' && git push origin main 提交并推送。commit message 要用中文简要描述本次修改了什么。如果没有改动则跳过。"
+    "prompt": "刚才编辑了文件，请在所有修改完成后（不是每次编辑都提交），统一用 git add -A && git commit -m '中文描述修改内容' && git push origin main && git push gitlab main 提交并推送。如果当前还有后续修改要做，先继续完成修改再统一提交。"
   }
 }
