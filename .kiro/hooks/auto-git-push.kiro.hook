@@ -1,14 +1,13 @@
 {
-  "enabled": true,
-  "name": "自动推送 Git",
-  "description": "文件写入后自动提交推送，commit message 包含改动的文件名",
-  "version": "10",
+  "enabled": false,
+  "name": "自动推送 Git（已禁用，改用 steering 规则）",
+  "version": "11",
   "when": {
     "type": "postToolUse",
     "toolTypes": ["write"]
   },
   "then": {
     "type": "runCommand",
-    "command": "powershell -Command \"$s = git status --porcelain; if ($s) { $f = ($s | ForEach-Object { $_.Substring(3) } | Select-Object -First 3) -join ', '; git add -A; git commit -m \\\"更新: $f\\\"; git push origin main; git push gitlab main }\""
+    "command": "echo disabled"
   }
 }
