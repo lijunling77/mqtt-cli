@@ -1,13 +1,13 @@
 {
   "enabled": true,
-  "name": "提交推送 Git",
-  "description": "点击按钮后检查文件改动，有改动则提交推送到 origin 和 gitlab",
-  "version": "5",
+  "name": "自动推送 Git",
+  "description": "每次对话结束后，如果有文件改动则自动提交推送到 origin 和 gitlab",
+  "version": "7",
   "when": {
-    "type": "userTriggered"
+    "type": "agentStop"
   },
   "then": {
     "type": "askAgent",
-    "prompt": "检查 git status --porcelain，如果有改动，用 git add -A && git commit -m '中文描述修改内容' && git push origin main && git push gitlab main 提交推送。没有改动则回复"没有改动"。"
+    "prompt": "运行 git status --porcelain。如果输出为空，只回复四个字"没有改动"，不要调用任何工具。如果有输出，运行 git add -A && git commit -m '用中文描述本次改动内容' && git push origin main && git push gitlab main，commit message 要具体描述改了什么。推送完成后只回复"已推送"两个字，不要多说。"
   }
 }
