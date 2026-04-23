@@ -1,0 +1,28 @@
+# 充电流程测试 — 验证即插即充和扫码充电的完整流程
+name: 充电流程测试
+description: 验证即插即充和扫码充电的完整充电流程（空闲→启动→充电→结束→交易→空闲）
+env: pre
+
+steps:
+  - action: plug_charge
+    name: TC-01 即插即充-默认参数
+
+  - action: sleep
+    seconds: 5
+
+  - action: scan_charge
+    name: TC-02 扫码充电-默认参数
+
+  - action: sleep
+    seconds: 5
+
+  - action: plug_charge
+    name: TC-03 即插即充-指定桩编号
+    pile: XPAC2017YS03240002
+
+  - action: sleep
+    seconds: 5
+
+  - action: scan_charge
+    name: TC-04 扫码充电-指定UID
+    uid: "8102985"

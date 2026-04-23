@@ -1,0 +1,41 @@
+# 异常状态模拟测试 — 验证各种桩异常状态上报
+name: 异常状态模拟测试
+description: 覆盖故障、急停、升级中、启动失败、锁枪等异常场景
+env: pre
+
+steps:
+  - action: fault_error
+    name: TC-13 故障模拟-E07
+    code: E07
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_error
+    name: TC-14 故障模拟-E45
+    code: E45
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_estop
+    name: TC-15 急停模拟-E05
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_upgrading
+    name: TC-16 升级中模拟-status=6
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_start_fail
+    name: TC-17 启动失败-reason=1
+    reason: 1
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_gun_lock
+    name: TC-18 锁枪异常-E71

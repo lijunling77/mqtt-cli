@@ -1,0 +1,25 @@
+# 跨环境测试 — 验证 test 环境的基础功能
+name: 跨环境测试
+description: 在 test 环境下验证即插即充和故障模拟，确认环境切换正常
+env: test
+
+steps:
+  - action: plug_charge
+    name: TC-19 test环境-即插即充
+    pile: "559847003"
+    vin: TESTNUYCXPKWVTIZF
+
+  - action: sleep
+    seconds: 5
+
+  - action: fault_error
+    name: TC-20 test环境-故障模拟
+    pile: "559847003"
+    code: E07
+
+  - action: sleep
+    seconds: 3
+
+  - action: fault_estop
+    name: TC-21 test环境-急停模拟
+    pile: "559847003"

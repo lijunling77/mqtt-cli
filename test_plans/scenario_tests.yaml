@@ -1,0 +1,60 @@
+# 场景脚本测试 — 验证充电小结、满足度、身份盗用等场景
+name: 场景脚本测试
+description: 覆盖充电小结、三种满足度模式、四种身份盗用模式
+env: pre
+
+steps:
+  # ── 充电小结 ──
+  - action: summary
+    name: TC-05 充电小结-多条BMS数据
+
+  - action: sleep
+    seconds: 5
+
+  # ── 满足度场景 ──
+  - action: satisfaction
+    name: TC-06 满足度-需求低预期高(>=95%)
+    mode: normal
+
+  - action: sleep
+    seconds: 3
+
+  - action: satisfaction
+    name: TC-07 满足度-车桩错配
+    mode: mismatch
+
+  - action: sleep
+    seconds: 3
+
+  - action: satisfaction
+    name: TC-08 满足度-同车分流(<95%)
+    mode: shunt
+
+  - action: sleep
+    seconds: 5
+
+  # ── 身份盗用场景 ──
+  - action: identity_theft
+    name: TC-09 身份盗用-正常(不触发告警)
+    mode: normal
+
+  - action: sleep
+    seconds: 3
+
+  - action: identity_theft
+    name: TC-10 身份盗用-电池类型不一致(告警+停用)
+    mode: bat-type
+
+  - action: sleep
+    seconds: 3
+
+  - action: identity_theft
+    name: TC-11 身份盗用-额定容量偏差(人工核实)
+    mode: ah-bias
+
+  - action: sleep
+    seconds: 3
+
+  - action: identity_theft
+    name: TC-12 身份盗用-标定能量偏差(人工核实)
+    mode: kwh-bias
