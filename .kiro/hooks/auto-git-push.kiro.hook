@@ -1,13 +1,13 @@
 {
   "enabled": true,
-  "name": "自动推送 Git",
-  "description": "AI 执行完成后，如果有文件改动则统一提交推送到 origin 和 gitlab",
-  "version": "3",
+  "name": "提交推送 Git",
+  "description": "点击按钮后检查文件改动，有改动则提交推送到 origin 和 gitlab",
+  "version": "5",
   "when": {
-    "type": "agentStop"
+    "type": "userTriggered"
   },
   "then": {
     "type": "askAgent",
-    "prompt": "检查 git status --porcelain，如果输出为空则直接回复"没有文件改动，跳过"（不要调用任何工具）。如果有改动，用 git add -A && git commit -m '中文描述修改内容' && git push origin main && git push gitlab main 提交推送。"
+    "prompt": "检查 git status --porcelain，如果有改动，用 git add -A && git commit -m '中文描述修改内容' && git push origin main && git push gitlab main 提交推送。没有改动则回复"没有改动"。"
   }
 }
