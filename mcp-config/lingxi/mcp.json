@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mqtt-charger": {
+      "command": "python",
+      "args": ["mqtt_mcp_server.py"],
+      "cwd": ""
+    }
+  }
+}

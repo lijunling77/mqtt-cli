@@ -93,6 +93,14 @@ pip install -r requirements.txt
 
 ## 灵犀 / 其他支持 MCP 的工具
 
+灵犀配置文件在 `mcp-config/lingxi/` 目录下，提供三种接入方案：
+
+| 文件 | 适用场景 |
+|------|---------|
+| `mcp.json` | 灵犀支持 MCP 协议时，配置此文件即可用自然语言调用 |
+| `rules.md` | 灵犀支持自定义规则/提示词时，导入此文件作为 AI 指令规则 |
+| `cli-cheatsheet.md` | 灵犀只支持终端命令时，参考此速查卡 |
+
 如果工具支持 MCP stdio 协议，配置方式类似：
 - **command**: `python`
 - **args**: `["mqtt_mcp_server.py"]`（或完整路径）
