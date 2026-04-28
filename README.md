@@ -92,9 +92,19 @@ python run_plan.py test_plans/fault_tests.yaml --env test  # 指定环境
 
 ## AI 工具集成
 
-### Kiro / Cursor / Claude Desktop / VS Code Copilot
+### Kiro / Cursor / Claude Desktop / VS Code Copilot / 灵犀
 
-本项目提供 MCP Server（`mqtt_mcp_server.py`），支持在 AI 工具中用自然语言操作充电桩模拟。各工具配置方式见 `mcp-config/README.md`。
+本项目已为各 AI 工具准备好规则文件，克隆项目后自动生效：
+
+| AI 工具 | 规则文件 |
+|---------|---------|
+| Kiro | `.kiro/skills/mqtt-charger/SKILL.md` + MCP |
+| Cursor | `.cursorrules` + MCP |
+| VS Code Copilot | `.github/copilot-instructions.md` + MCP |
+| Claude Desktop | MCP 配置 |
+| 灵犀 | `mcp-config/lingxi/rules.md` |
+
+MCP 协议配置详见 `mcp-config/README.md`。
 
 ## 配置文件说明
 
